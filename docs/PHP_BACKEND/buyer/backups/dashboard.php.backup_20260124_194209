@@ -1,0 +1,150 @@
+<?php
+/**
+ * Buyer Dashboard API
+ * Provides dashboard statistics for buyers
+ */
+
+require_once '../config/database.php';
+require_once '../config/helpers.php';
+require_once '../auth/middleware.php';
+
+setCorsHeaders();
+
+try {
+    $user = requireApiRole('buyer');
+    $database = new Database();
+    $conn = $database->getConnection();
+
+    // Get cart count - using localStorage on frontend, but query for consistency
+    $cart_count = 0;
+    
+    // Get wishlist count - with error handling
+    $wishlist_count = 0;
+    try {
+        $stmt = $conn->prepare("SELECT COUNT(*) as count FROM wishlist WHERE user_id = ?");
+        $stmt->execute([$user['user_id']]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        $wishlist_count = $result['count'] ?? 0;
+    } catch (Exception $e) {
+        error_log('Wishlist count error: ' . $e->getMessage());
+        $wishlist_count = 0;
+    }
+
+    // Get buyer ID first
+    $buyer = null;
+    try {
+        $buyerStmt = $conn->prepare("SELECT id FROM buyer WHERE user_id = ?");
+        $buyerStmt->execute([$user['user_id']]);
+        $buyer = $buyerStmt->fetch(PDO::FETCH_ASSOC);
+    } catch (Exception $e) {
+        error_log('Buyer lookup error: ' . $e->getMessage());
+    }
+
+    // Get total orders count - with error handling
+    $total_orders = 0;
+    try {
+        if ($buyer) {
+            $stmt = $conn->prepare("SELECT COUNT(*) as count FROM orders WHERE buyer_id = ?");
+            $stmt->execute([$buyer['id']]);
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            $total_orders = (int)($result['count'] ?? 0);
+        }
+    } catch (Exception $e) {
+        error_log('Total orders count error: ' . $e->getMessage());
+        $total_orders = 0;
+    }
+
+    // Get pending delivery count (pending, processing, shipped) - with error handling
+    $pending_count = 0;
+    try {
+        if ($buyer) {
+            $stmt = $conn->prepare("
+                SELECT COUNT(*) as count FROM orders 
+                WHERE buyer_id = ? 
+                AND status IN ('pending', 'processing', 'shipped')
+            ");
+            $stmt->execute([$buyer['id']]);
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            $pending_count = (int)($result['count'] ?? 0);
+        }
+    } catch (Exception $e) {
+        error_log('Pending delivery count error: ' . $e->getMessage());
+        $pending_count = 0;
+    }
+
+    // Get recent activities
+    $activities = [];
+    
+    // Recent orders - with error handling
+    try {
+        if ($buyer) {
+            $stmt = $conn->prepare("
+                SELECT 'order' as type, CONCAT('Order #', order_number, ' - ', status) as message, created_at 
+                FROM orders 
+                WHERE buyer_id = ?
+                ORDER BY created_at DESC 
+                LIMIT 3
+            ");
+            $stmt->execute([$buyer['id']]);
+            $order_activities = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $activities = array_merge($activities, $order_activities ?? []);
+        }
+    } catch (Exception $e) {
+        error_log('Orders activities error: ' . $e->getMessage());
+    }
+
+    // Recent reviews - with error handling
+    try {
+        $stmt = $conn->prepare("
+            SELECT 'review' as type, CONCAT('You reviewed a product') as message, created_at 
+            FROM product_review 
+            WHERE user_id = ?
+            ORDER BY created_at DESC 
+            LIMIT 2
+        ");
+        $stmt->execute([$user['user_id']]);
+        $review_activities = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $activities = array_merge($activities, $review_activities ?? []);
+    } catch (Exception $e) {
+        error_log('Review activities error: ' . $e->getMessage());
+    }
+
+    // Sort by created_at and limit
+    usort($activities, function ($a, $b) {
+        return strtotime($b['created_at']) - strtotime($a['created_at']);
+    });
+    $activities = array_slice($activities, 0, 5);
+
+    // Format time_ago for each activity
+    foreach ($activities as &$activity) {
+        $time_diff = time() - strtotime($activity['created_at']);
+        if ($time_diff < 60) {
+            $activity['time_ago'] = 'Just now';
+        } elseif ($time_diff < 3600) {
+            $mins = floor($time_diff / 60);
+            $activity['time_ago'] = $mins . ' minute' . ($mins > 1 ? 's' : '') . ' ago';
+        } elseif ($time_diff < 86400) {
+            $hours = floor($time_diff / 3600);
+            $activity['time_ago'] = $hours . ' hour' . ($hours > 1 ? 's' : '') . ' ago';
+        } else {
+            $days = floor($time_diff / 86400);
+            $activity['time_ago'] = $days . ' day' . ($days > 1 ? 's' : '') . ' ago';
+        }
+    }
+
+    jsonResponse([
+        'success' => true,
+        'data' => [
+            'cartItems' => $cart_count,
+            'wishlistItems' => $wishlist_count,
+            'totalOrders' => $total_orders,
+            'pendingDelivery' => $pending_count,
+            'recentActivities' => $activities
+        ]
+    ]);
+
+} catch (Exception $e) {
+    error_log('Dashboard error: ' . $e->getMessage());
+    jsonResponse(['error' => 'Operation failed: ' . $e->getMessage()], 500);
+}
+?>

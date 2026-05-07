@@ -1,0 +1,95 @@
+<?php
+/**
+ * Farmer Dashboard Analytics
+ * Agriculture Product Marketplace
+ */
+
+require_once '../config/database.php';
+require_once '../config/helpers.php';
+require_once '../auth/middleware.php';
+
+setCorsHeaders();
+
+if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
+    jsonResponse(['error' => 'Method not allowed'], 405);
+}
+
+try {
+    $user = validateToken();
+    if (!$user || $user['role_name'] !== 'farmer') {
+        jsonResponse(['error' => 'Unauthorized or not a farmer'], 401);
+    }
+
+    $database = new Database();
+    $conn = $database->getConnection();
+
+    // Get farmer ID from user
+    $stmt = $conn->prepare("SELECT id FROM farmer WHERE user_id = ?");
+    $stmt->execute([$user['user_id']]);
+    $farmerResult = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$farmerResult) {
+        jsonResponse(['error' => 'Farmer profile not found'], 404);
+    }
+    
+    $farmer_id = $farmerResult['id'];
+
+    // Total Products
+    $stmt = $conn->prepare("SELECT COUNT(*) as count FROM product WHERE farmer_id = ?");
+    $stmt->execute([$farmer_id]);
+    $total_products = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+    // Pending Orders - Count unique orders where THIS farmer has items in pending/processing status
+    $stmt = $conn->prepare("
+        SELECT COUNT(DISTINCT o.id) as count
+        FROM orders o
+        WHERE EXISTS (
+            SELECT 1 FROM order_items oi 
+            WHERE oi.order_id = o.id 
+            AND oi.farmer_id = ?
+            AND o.status IN ('pending', 'confirmed', 'processing')
+        )
+    ");
+    $stmt->execute([$farmer_id]);
+    $pending_orders = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+    // Total Revenue
+    $stmt = $conn->prepare("
+        SELECT SUM(oi.subtotal) as total
+        FROM order_items oi
+        JOIN orders o ON oi.order_id = o.id
+        WHERE oi.farmer_id = ? AND o.status IN ('delivered', 'shipped')
+    ");
+    $stmt->execute([$farmer_id]);
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    $total_revenue = $result['total'] ?? 0;
+
+    // Average Rating
+    $stmt = $conn->prepare("
+        SELECT AVG(r.rating) as avg_rating
+        FROM review r
+        JOIN product p ON r.product_id = p.id
+        WHERE p.farmer_id = ? AND r.rating IS NOT NULL
+    ");
+    $stmt->execute([$farmer_id]);
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    $avg_rating = round($result['avg_rating'] ?? 0, 1);
+
+    jsonResponse([
+        'success' => true,
+        'data' => [
+            'total_products' => (int)$total_products,
+            'pending_orders' => (int)$pending_orders,
+            'total_revenue' => (float)$total_revenue,
+            'avg_rating' => (float)$avg_rating
+        ]
+    ]);
+
+} catch (Exception $e) {
+    jsonResponse([
+        'success' => false,
+        'message' => 'Failed to fetch farmer analytics',
+        'error' => $e->getMessage()
+    ], 500);
+}
+?>

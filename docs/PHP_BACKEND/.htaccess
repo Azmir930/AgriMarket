@@ -1,0 +1,16 @@
+# Rewrite engine for PHP Backend
+RewriteEngine On
+RewriteBase /PHP_BACKEND/
+
+# Pass Authorization header to PHP
+RewriteCond %{HTTP:Authorization} ^(.*)$
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
+
+# Remove .php extension
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php?url=$1 [QSA,L]
+
+# Allow direct access to PHP files
+RewriteCond %{REQUEST_FILENAME} \.php$
+RewriteRule ^(.*)$ $1 [QSA,L]

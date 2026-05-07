@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>KYC Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        textarea {
+            width: 100%;
+            height: 300px;
+            font-family: monospace;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #45a049;
+        }
+
+        .error {
+            color: red;
+        }
+
+        .success {
+            color: green;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>KYC Update Test</h1>
+
+        <div>
+            <h3>Test Parameters</h3>
+            <label>Auth Token (from localStorage):</label>
+            <input type="text" id="token" style="width: 100%; margin-bottom: 10px;">
+
+            <label>User ID to test:</label>
+            <input type="text" id="userId" value="1" style="width: 100%; margin-bottom: 10px;">
+
+            <label>Status:</label>
+            <select id="status" style="width: 100%; margin-bottom: 10px;">
+                <option value="verified">Verified</option>
+                <option value="rejected">Rejected</option>
+            </select>
+        </div>
+
+        <button onclick="testKYC()">Test KYC Update</button>
+        <button onclick="loadToken()">Load Token from LocalStorage</button>
+
+        <h3>Response:</h3>
+        <textarea id="response" readonly></textarea>
+    </div>
+
+    <script>
+        function loadToken() {
+            const token = localStorage.getItem('auth_token');
+            const tokenInput = document.getElementById('token');
+            if (token) {
+                tokenInput.value = token;
+                document.getElementById('response').value = 'Token loaded: ' + token.substring(0, 50) + '...';
+            } else {
+                document.getElementById('response').value = 'ERROR: No auth token found in localStorage';
+            }
+        }
+
+        async function testKYC() {
+            const token = document.getElementById('token').value;
+            const userId = document.getElementById('userId').value;
+            const status = document.getElementById('status').value;
+            const responseArea = document.getElementById('response');
+
+            if (!token) {
+                responseArea.value = 'ERROR: Auth token is required. Click "Load Token from LocalStorage" first.';
+                return;
+            }
+
+            if (!userId) {
+                responseArea.value = 'ERROR: User ID is required';
+                return;
+            }
+
+            responseArea.value = 'Testing...\n\nRequest Details:\n' +
+                'URL: http://localhost/PHP_BACKEND/admin/kyc_verification.php\n' +
+                'Method: POST\n' +
+                'Auth Token: ' + token.substring(0, 50) + '...\n' +
+                'Payload: ' + JSON.stringify({ user_id: userId, status: status }, null, 2) + '\n\n' +
+                'Waiting for response...\n';
+
+            try {
+                const response = await fetch('http://localhost/PHP_BACKEND/admin/kyc_verification.php', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        user_id: userId,
+                        status: status,
+                    }),
+                });
+
+                const data = await response.json();
+
+                responseArea.value = 'Response Status: ' + response.status + ' ' + response.statusText + '\n\n' +
+                    'Response Body:\n' +
+                    JSON.stringify(data, null, 2);
+
+                if (data.success) {
+                    responseArea.classList.add('success');
+                    responseArea.classList.remove('error');
+                } else {
+                    responseArea.classList.add('error');
+                    responseArea.classList.remove('success');
+                }
+            } catch (error) {
+                responseArea.value = 'FETCH ERROR:\n' + error.toString() + '\n\n' +
+                    'This usually means:\n' +
+                    '1. The PHP backend is not running at http://localhost\n' +
+                    '2. CORS is not properly configured\n' +
+                    '3. Network connectivity issue\n\n' +
+                    'Make sure your PHP server is running and accessible.';
+                responseArea.classList.add('error');
+                responseArea.classList.remove('success');
+            }
+        }
+
+        // Auto-load token on page load
+        window.addEventListener('load', loadToken);
+    </script>
+</body>
+
+</html>
